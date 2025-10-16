@@ -1,20 +1,19 @@
 {
-  "name": "luma-scraper",
+  "name": "luma-scraper-clean",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
-  "start": "node index.js",
-  "postinstall": "puppeteer browsers install chrome"
-},
+    "start": "node index.js"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
+    "chromium": "^3.0.3",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "luxon": "^3.7.2",
-    "puppeteer": "^24.23.0"
+    "puppeteer": "^24.5.0"
   }
 }
