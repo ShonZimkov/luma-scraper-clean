@@ -1,5 +1,5 @@
 {
-  "name": "luma-scraper-clean",
+  "name": "luma-scraper",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -9,10 +9,11 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "type": "commonjs",
   "dependencies": {
-    "express": "^4.18.2",
     "cors": "^2.8.5",
-    "puppeteer": "^21.5.0",
-    "luxon": "^3.4.0"
+    "express": "^5.1.0",
+    "luxon": "^3.7.2",
+    "puppeteer": "^24.23.0"
   }
 }
