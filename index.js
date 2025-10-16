@@ -27,9 +27,10 @@ app.post("/scrape-luma-event", async (req, res) => {
 
   try {
     const browser = await puppeteer.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+  headless: true,
+  args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  executablePath: "/usr/bin/google-chrome-stable" // ✅ use system Chrome on Render
+});
 
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
