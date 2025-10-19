@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
-const puppeteer = require("puppeteer");
+const chromium = require("@sparticuz/chromium");
+const puppeteer = require("puppeteer-core");
 const { DateTime } = require("luxon");
 const fs = require("fs");
 
@@ -58,9 +59,14 @@ app.post("/scrape-luma-event", async (req, res) => {
   }
 
   try {
-    console.log("🚀 Launching browser for:", url);
-    const browser = await launchBrowser();
-    console.log("✅ Browser launched successfully");
+console.log("🚀 Launching headless Chromium...");
+const browser = await puppeteer.launch({
+  args: chromium.args,
+  defaultViewport: chromium.defaultViewport,
+  executablePath: await chromium.executablePath(),
+  headless: chromium.headless,
+});
+console.log("✅ Browser launched successfully");
 
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
