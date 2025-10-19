@@ -1,12 +1,44 @@
-// index.js
 const express = require("express");
 const cors = require("cors");
 const puppeteer = require("puppeteer");
 const { DateTime } = require("luxon");
+const fs = require("fs");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// 🧭 Robust browser launcher that works across Render environments
+async function launchBrowser() {
+  const chromePaths = [
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser"
+  ];
+
+  let executablePath;
+  for (const path of chromePaths) {
+    try {
+      fs.accessSync(path);
+      executablePath = path;
+      console.log(`🎯 Found Chrome executable at: ${path}`);
+      break;
+    } catch {}
+  }
+
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu"
+    ],
+    executablePath: executablePath || puppeteer.executablePath()
+  });
+
+  return browser;
+}
 
 const normalizeLumaUrl = (url) => {
   return url
@@ -20,27 +52,15 @@ app.post("/scrape-luma-event", async (req, res) => {
 
   // Normalize
   url = normalizeLumaUrl(url);
-  
+
   if (!url || !url.includes("lu.ma")) {
     return res.status(400).json({ error: "Please provide a valid Luma event URL." });
   }
 
   try {
-    console.log('🚀 Launching browser for:', url);
-    
-    // Use default Chrome from Puppeteer base image
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-      ],
-      timeout: 60000
-    });
-
-    console.log('✅ Browser launched successfully');
+    console.log("🚀 Launching browser for:", url);
+    const browser = await launchBrowser();
+    console.log("✅ Browser launched successfully");
 
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
@@ -66,7 +86,6 @@ app.post("/scrape-luma-event", async (req, res) => {
 
       const dateTitle = document.querySelector("div.title.text-ellipses")?.innerText.trim() || "";
       const dateDesc = document.querySelector("div.desc.text-ellipses")?.innerText.trim() || "";
-
       const venueAddress = document.querySelector("div.text-tinted.fs-sm.mt-05")?.innerText.trim() || "";
 
       return {
@@ -75,7 +94,7 @@ app.post("/scrape-luma-event", async (req, res) => {
         dateDesc,
         locationText: venueAddress,
         organizer: getText([
-          '[data-testid="event-host"]',
+          '[data-testid=\"event-host\"]',
           "a[href*='/profile/']",
           "div[class*='OrganizerName']",
           "div[class*='host']",
@@ -119,7 +138,7 @@ app.post("/scrape-luma-event", async (req, res) => {
       image: raw.image,
     };
 
-    console.log('✅ Successfully scraped:', data.title);
+    console.log("✅ Successfully scraped:", data.title);
     res.json({ success: true, url, data });
   } catch (error) {
     console.error("❌ Scraping failed:", error.message);
@@ -127,8 +146,8 @@ app.post("/scrape-luma-event", async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
-  console.log('🎭 Using Puppeteer base image with pre-installed Chrome');
+  console.log("🎭 Using Puppeteer base image with pre-installed Chrome");
 });
