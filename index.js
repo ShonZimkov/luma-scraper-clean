@@ -28,7 +28,17 @@ app.post("/scrape-luma-event", async (req, res) => {
   try {
     const browser = await puppeteer.launch({
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-zygote",
+        "--single-process",
+        "--disable-extensions",
+      ],
+      timeout: 60000
     });
 
     const page = await browser.newPage();
@@ -75,38 +85,38 @@ app.post("/scrape-luma-event", async (req, res) => {
 
     await browser.close();
 
-// 🧠 Combine date parts
-const fullDateText = `${raw.dateTitle} ${raw.dateDesc}`.replace("•", " ").trim();
+    // 🧠 Combine date parts
+    const fullDateText = `${raw.dateTitle} ${raw.dateDesc}`.replace("•", " ").trim();
 
-// Extract time range (e.g. "6:00 PM - 9:00 PM")
-const timeMatch = raw.dateDesc.match(/(\d{1,2}:\d{2}\s*[APMapm]+)\s*-\s*(\d{1,2}:\d{2}\s*[APMapm]+)/);
-const [startTime, endTime] = timeMatch ? [timeMatch[1], timeMatch[2]] : ["", ""];
+    // Extract time range (e.g. "6:00 PM - 9:00 PM")
+    const timeMatch = raw.dateDesc.match(/(\d{1,2}:\d{2}\s*[APMapm]+)\s*-\s*(\d{1,2}:\d{2}\s*[APMapm]+)/);
+    const [startTime, endTime] = timeMatch ? [timeMatch[1], timeMatch[2]] : ["", ""];
 
-// Parse into simple ISO strings (no timezone adjustments)
-let startISO = "", endISO = "";
-try {
-  if (raw.dateTitle && startTime && endTime) {
-    const baseDate = raw.dateTitle.replace(",", "");
-    const start = DateTime.fromFormat(`${baseDate} ${startTime}`, "cccc LLLL d h:mm a");
-    const end = DateTime.fromFormat(`${baseDate} ${endTime}`, "cccc LLLL d h:mm a");
-    if (start.isValid) startISO = start.toISO({ suppressMilliseconds: true, includeOffset: false });
-    if (end.isValid) endISO = end.toISO({ suppressMilliseconds: true, includeOffset: false });
-  }
-} catch (err) {
-  console.warn("⚠️ Date parse failed:", err.message);
-}
+    // Parse into simple ISO strings (no timezone adjustments)
+    let startISO = "", endISO = "";
+    try {
+      if (raw.dateTitle && startTime && endTime) {
+        const baseDate = raw.dateTitle.replace(",", "");
+        const start = DateTime.fromFormat(`${baseDate} ${startTime}`, "cccc LLLL d h:mm a");
+        const end = DateTime.fromFormat(`${baseDate} ${endTime}`, "cccc LLLL d h:mm a");
+        if (start.isValid) startISO = start.toISO({ suppressMilliseconds: true, includeOffset: false });
+        if (end.isValid) endISO = end.toISO({ suppressMilliseconds: true, includeOffset: false });
+      }
+    } catch (err) {
+      console.warn("⚠️ Date parse failed:", err.message);
+    }
 
-// ✅ Final structured data for Bubble
-const data = {
-  title: raw.title,
-  date_text: `${raw.dateTitle} • ${raw.dateDesc}`,
-  date_start: startISO,
-  date_end: endISO,
-  location_text: raw.locationText,
-  location_geographic: raw.locationText,
-  organizer: raw.organizer,
-  image: raw.image,
-};
+    // ✅ Final structured data for Bubble
+    const data = {
+      title: raw.title,
+      date_text: `${raw.dateTitle} • ${raw.dateDesc}`,
+      date_start: startISO,
+      date_end: endISO,
+      location_text: raw.locationText,
+      location_geographic: raw.locationText,
+      organizer: raw.organizer,
+      image: raw.image,
+    };
 
     res.json({ success: true, url, data });
   } catch (error) {
