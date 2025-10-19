@@ -26,6 +26,9 @@ app.post("/scrape-luma-event", async (req, res) => {
   }
 
   try {
+    console.log('🚀 Launching browser for:', url);
+    
+    // Use default Chrome from Puppeteer base image
     const browser = await puppeteer.launch({
       headless: true,
       args: [
@@ -33,13 +36,11 @@ app.post("/scrape-luma-event", async (req, res) => {
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
         "--disable-gpu",
-        "--no-first-run",
-        "--no-zygote",
-        "--single-process",
-        "--disable-extensions",
       ],
       timeout: 60000
     });
+
+    console.log('✅ Browser launched successfully');
 
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
@@ -118,12 +119,16 @@ app.post("/scrape-luma-event", async (req, res) => {
       image: raw.image,
     };
 
+    console.log('✅ Successfully scraped:', data.title);
     res.json({ success: true, url, data });
   } catch (error) {
-    console.error("❌ Scraping failed:", error);
+    console.error("❌ Scraping failed:", error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+  console.log('🎭 Using Puppeteer base image with pre-installed Chrome');
+});
