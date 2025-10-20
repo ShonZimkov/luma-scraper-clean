@@ -28,10 +28,25 @@ app.post("/scrape-luma-event", async (req, res) => {
   try {
     console.log("🚀 Launching headless Chromium...");
 
+    // const browser = await puppeteer.launch({
+    //   args: chromium.args,
+    //   defaultViewport: chromium.defaultViewport,
+    //   executablePath: await chromium.executablePath(),
+    //   headless: chromium.headless,
+    // });
+    const isLocal = process.platform === "darwin"; // macOS check
+    const execPath = isLocal
+      ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+      : await chromium.executablePath();
+    
+    console.log("🧭 Using Chrome executable:", execPath);
+    
     const browser = await puppeteer.launch({
-      args: chromium.args,
+      args: isLocal
+        ? ["--no-sandbox", "--disable-setuid-sandbox"]
+        : chromium.args,
       defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
+      executablePath: execPath,
       headless: chromium.headless,
     });
 
@@ -59,35 +74,54 @@ app.post("/scrape-luma-event", async (req, res) => {
         return meta ? meta.content : "";
       };
 
-// 🕒 Date extraction — works with both old & new Luma layouts
+// 🕒 Date extraction — updated for 2025 Luma layout
 let dateTitle = "";
 let dateDesc = "";
 
 try {
-  // Find any element that looks like a date block
-  const possibleDateEls = Array.from(document.querySelectorAll("div, span, p"))
-    .map(el => el.innerText?.trim())
-    .filter(txt => txt && txt.match(/(AM|PM)/) && txt.includes("•"));
+  // ✅ Directly target the current Luma structure
+  const titleEl = document.querySelector("div.title.text-ellipses");
+  const descEl = document.querySelector("div.desc.text-ellipses");
 
-  if (possibleDateEls.length > 0) {
-    const fullDateText = possibleDateEls[0];
-    if (fullDateText.includes("•")) {
-      [dateTitle, dateDesc] = fullDateText.split("•").map(t => t.trim());
-    } else {
-      dateTitle = fullDateText.trim();
+  if (titleEl && titleEl.innerText.trim()) dateTitle = titleEl.innerText.trim();
+  if (descEl && descEl.innerText.trim()) dateDesc = descEl.innerText.trim();
+
+  // 🪄 Fallback for legacy layout with "•" separator
+  if ((!dateTitle || !dateDesc) && !dateDesc.includes("PST")) {
+    const possibleDateEls = Array.from(document.querySelectorAll("div, span, p"))
+      .map(el => el.innerText?.trim())
+      .filter(txt => txt && txt.match(/(AM|PM)/) && txt.includes("•"));
+
+    if (possibleDateEls.length > 0) {
+      const fullDateText = possibleDateEls[0];
+      if (fullDateText.includes("•")) {
+        [dateTitle, dateDesc] = fullDateText.split("•").map(t => t.trim());
+      } else {
+        dateTitle = fullDateText.trim();
+      }
     }
   }
 
-  // fallback - meta tag if exists
-  if (!dateTitle) {
+  // 🧭 Fallback to meta tags if all else fails
+  if (!dateTitle && !dateDesc) {
     const metaStart = document.querySelector('meta[property="event:start_time"]')?.content;
     const metaEnd = document.querySelector('meta[property="event:end_time"]')?.content;
     if (metaStart) {
       const start = new Date(metaStart);
       dateTitle = start.toDateString();
-      dateDesc = metaEnd ? `${new Date(metaStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${new Date(metaEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : "";
+      dateDesc = metaEnd
+        ? `${new Date(metaStart).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })} - ${new Date(metaEnd).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}`
+        : "";
     }
   }
+
+  console.log("🧭 Extracted date:", { dateTitle, dateDesc }); // log to verify
 } catch (err) {
   console.warn("⚠️ Date extraction error:", err);
 }
