@@ -59,47 +59,37 @@ app.post("/scrape-luma-event", async (req, res) => {
         return meta ? meta.content : "";
       };
 
-// 🕒 Robust date detection for all Luma layouts
+// 🕒 Date extraction — works with both old & new Luma layouts
 let dateTitle = "";
 let dateDesc = "";
 
 try {
-  // 1️⃣ Try explicit test-id (new layout)
-  const testIdEl = document.querySelector("[data-testid='event-date']");
-  if (testIdEl && testIdEl.innerText.trim()) {
-    const txt = testIdEl.innerText.trim();
-    if (txt.includes("•")) {
-      [dateTitle, dateDesc] = txt.split("•").map(t => t.trim());
+  // Find any element that looks like a date block
+  const possibleDateEls = Array.from(document.querySelectorAll("div, span, p"))
+    .map(el => el.innerText?.trim())
+    .filter(txt => txt && txt.match(/(AM|PM)/) && txt.includes("•"));
+
+  if (possibleDateEls.length > 0) {
+    const fullDateText = possibleDateEls[0];
+    if (fullDateText.includes("•")) {
+      [dateTitle, dateDesc] = fullDateText.split("•").map(t => t.trim());
     } else {
-      dateTitle = txt;
+      dateTitle = fullDateText.trim();
     }
   }
 
-  // 2️⃣ Try old structure (title/desc pair)
+  // fallback - meta tag if exists
   if (!dateTitle) {
-    const titleEl = document.querySelector("div.title.text-ellipses");
-    const descEl = document.querySelector("div.desc.text-ellipses");
-    if (titleEl) dateTitle = titleEl.innerText.trim();
-    if (descEl) dateDesc = descEl.innerText.trim();
-  }
-
-  // 3️⃣ Try meta tag (some new events store it there)
-  if (!dateTitle) {
-    const metaDate = document.querySelector('meta[property="event:start_time"]')?.content;
-    if (metaDate) dateTitle = new Date(metaDate).toDateString();
-  }
-
-  // 4️⃣ Last fallback — scan all divs for pattern like "Sunday, November 2 • 8:30 AM"
-  if (!dateTitle) {
-    const candidate = Array.from(document.querySelectorAll("div"))
-      .map(d => d.innerText)
-      .find(t => t?.match(/\d{1,2}:\d{2}\s*[APMapm]/) && t.includes("•"));
-    if (candidate) {
-      [dateTitle, dateDesc] = candidate.split("•").map(t => t.trim());
+    const metaStart = document.querySelector('meta[property="event:start_time"]')?.content;
+    const metaEnd = document.querySelector('meta[property="event:end_time"]')?.content;
+    if (metaStart) {
+      const start = new Date(metaStart);
+      dateTitle = start.toDateString();
+      dateDesc = metaEnd ? `${new Date(metaStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${new Date(metaEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : "";
     }
   }
 } catch (err) {
-  console.warn("⚠️ Date extraction failed:", err);
+  console.warn("⚠️ Date extraction error:", err);
 }
 
       // Venue name & location
