@@ -59,26 +59,47 @@ app.post("/scrape-luma-event", async (req, res) => {
         return meta ? meta.content : "";
       };
 
-// Date extraction (new Luma layout)
+// 🕒 Robust date detection for all Luma layouts
 let dateTitle = "";
 let dateDesc = "";
 
-const dateEl =
-  document.querySelector("[data-testid='event-date']") ||
-  Array.from(document.querySelectorAll("div"))
-    .find(el => el.innerText?.match(/\b(AM|PM)\b/) && el.innerText.includes("•"));
-
-if (dateEl) {
-  const fullDateText = dateEl.innerText.trim();
-
-  // Try to split into two parts if "•" exists
-  if (fullDateText.includes("•")) {
-    const [titlePart, descPart] = fullDateText.split("•").map(s => s.trim());
-    dateTitle = titlePart;
-    dateDesc = descPart;
-  } else {
-    dateTitle = fullDateText;
+try {
+  // 1️⃣ Try explicit test-id (new layout)
+  const testIdEl = document.querySelector("[data-testid='event-date']");
+  if (testIdEl && testIdEl.innerText.trim()) {
+    const txt = testIdEl.innerText.trim();
+    if (txt.includes("•")) {
+      [dateTitle, dateDesc] = txt.split("•").map(t => t.trim());
+    } else {
+      dateTitle = txt;
+    }
   }
+
+  // 2️⃣ Try old structure (title/desc pair)
+  if (!dateTitle) {
+    const titleEl = document.querySelector("div.title.text-ellipses");
+    const descEl = document.querySelector("div.desc.text-ellipses");
+    if (titleEl) dateTitle = titleEl.innerText.trim();
+    if (descEl) dateDesc = descEl.innerText.trim();
+  }
+
+  // 3️⃣ Try meta tag (some new events store it there)
+  if (!dateTitle) {
+    const metaDate = document.querySelector('meta[property="event:start_time"]')?.content;
+    if (metaDate) dateTitle = new Date(metaDate).toDateString();
+  }
+
+  // 4️⃣ Last fallback — scan all divs for pattern like "Sunday, November 2 • 8:30 AM"
+  if (!dateTitle) {
+    const candidate = Array.from(document.querySelectorAll("div"))
+      .map(d => d.innerText)
+      .find(t => t?.match(/\d{1,2}:\d{2}\s*[APMapm]/) && t.includes("•"));
+    if (candidate) {
+      [dateTitle, dateDesc] = candidate.split("•").map(t => t.trim());
+    }
+  }
+} catch (err) {
+  console.warn("⚠️ Date extraction failed:", err);
 }
 
       // Venue name & location
