@@ -2,6 +2,7 @@ services:
   - type: web
     name: luma-scraper-clean
     runtime: docker
+    repo: https://github.com/ShonZimkov/luma-scraper-clean
     dockerfilePath: ./Dockerfile
     envVars:
       - key: NODE_ENV
