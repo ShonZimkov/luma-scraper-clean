@@ -1,21 +1,21 @@
+# Use Puppeteer base image with Chrome pre-installed
 FROM ghcr.io/puppeteer/puppeteer:23.11.1
 
 # Set working directory
 WORKDIR /app
 
-# Copy package files
+# Copy dependencies and install
 COPY package*.json ./
-
-# Install dependencies as root
 USER root
-RUN npm ci --only=production
+RUN npm install --omit=dev
 
-# Copy application files
+# Copy the rest of the app
 COPY . .
 
-# Switch back to pptruser (non-root user for security)
+# Use non-root user for security
 USER pptruser
 
 EXPOSE 3000
 
+# Start the app
 CMD ["node", "index.js"]
