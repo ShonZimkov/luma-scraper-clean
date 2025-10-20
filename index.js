@@ -59,10 +59,27 @@ app.post("/scrape-luma-event", async (req, res) => {
         return meta ? meta.content : "";
       };
 
-      const dateTitle =
-        document.querySelector("div.title.text-ellipses")?.innerText.trim() || "";
-      const dateDesc =
-        document.querySelector("div.desc.text-ellipses")?.innerText.trim() || "";
+// Date extraction (new Luma layout)
+let dateTitle = "";
+let dateDesc = "";
+
+const dateEl =
+  document.querySelector("[data-testid='event-date']") ||
+  Array.from(document.querySelectorAll("div"))
+    .find(el => el.innerText?.match(/\b(AM|PM)\b/) && el.innerText.includes("•"));
+
+if (dateEl) {
+  const fullDateText = dateEl.innerText.trim();
+
+  // Try to split into two parts if "•" exists
+  if (fullDateText.includes("•")) {
+    const [titlePart, descPart] = fullDateText.split("•").map(s => s.trim());
+    dateTitle = titlePart;
+    dateDesc = descPart;
+  } else {
+    dateTitle = fullDateText;
+  }
+}
 
       // Venue name & location
       const venueAddressEl = document.querySelector("div.text-tinted.fs-sm.mt-05");
