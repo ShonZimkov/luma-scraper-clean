@@ -1,7 +1,7 @@
-// index.js
 const express = require("express");
 const cors = require("cors");
-const puppeteer = require("puppeteer");
+const chromium = require("@sparticuz/chromium");
+const puppeteer = require("puppeteer-core");
 const { DateTime } = require("luxon");
 
 const app = express();
@@ -9,34 +9,33 @@ app.use(cors());
 app.use(express.json());
 
 // Normalize Luma URLs
-const normalizeLumaUrl = (url) => {
-  return url
+const normalizeLumaUrl = (url) =>
+  url
     .replace("https://www.luma.com", "https://lu.ma")
     .replace("https://luma.com", "https://lu.ma");
-};
 
 app.post("/scrape-luma-event", async (req, res) => {
   let { url } = req.body;
-  if (!url) return res.status(400).json({ error: "Missing URL." });
+  if (!url) return res.status(400).json({ success: false, error: "Missing URL" });
 
   url = normalizeLumaUrl(url);
-
   if (!url.includes("lu.ma")) {
-    return res.status(400).json({ error: "Please provide a valid Luma event URL." });
+    return res
+      .status(400)
+      .json({ success: false, error: "Please provide a valid Luma event URL." });
   }
 
   try {
-    console.log("🚀 Launching Puppeteer (Docker-ready)...");
+    console.log("🚀 Launching headless Chromium...");
+
     const browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-      ],
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
     });
-    console.log("✅ Browser launched");
+
+    console.log("✅ Browser launched successfully");
 
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
@@ -48,7 +47,7 @@ app.post("/scrape-luma-event", async (req, res) => {
           try {
             const el = document.querySelector(sel);
             if (el && el.innerText.trim()) return el.innerText.trim();
-          } catch (e) {}
+          } catch {}
         }
         return "";
       };
@@ -60,14 +59,18 @@ app.post("/scrape-luma-event", async (req, res) => {
         return meta ? meta.content : "";
       };
 
-      const dateTitle = document.querySelector("div.title.text-ellipses")?.innerText.trim() || "";
-      const dateDesc = document.querySelector("div.desc.text-ellipses")?.innerText.trim() || "";
+      const dateTitle =
+        document.querySelector("div.title.text-ellipses")?.innerText.trim() || "";
+      const dateDesc =
+        document.querySelector("div.desc.text-ellipses")?.innerText.trim() || "";
 
+      // Venue name & location
       const venueAddressEl = document.querySelector("div.text-tinted.fs-sm.mt-05");
       const venueAddress = venueAddressEl?.innerText.trim() || "";
-      const venueName = venueAddressEl?.previousElementSibling?.innerText.trim() || "";
+      const venueName =
+        venueAddressEl?.previousElementSibling?.innerText.trim() || "";
 
-      // Organizer — only first valid name
+      // Organizer — only first valid host name
       let firstHost = "";
       try {
         const hostContainer =
@@ -80,12 +83,13 @@ app.post("/scrape-luma-event", async (req, res) => {
           const hostCandidates = Array.from(
             hostContainer.querySelectorAll("a, div, span")
           )
-            .map(el => el.innerText.trim())
-            .filter(txt => txt && txt.length > 1);
+            .map((el) => el.innerText.trim())
+            .filter((txt) => txt && txt.length > 1);
 
           firstHost =
-            hostCandidates.find(txt => /^[A-Za-z]/.test(txt) && !txt.includes("\n")) ||
-            hostContainer.innerText.split("\n")[0].trim();
+            hostCandidates.find(
+              (txt) => /^[A-Za-z]/.test(txt) && !txt.includes("\n")
+            ) || hostContainer.innerText.split("\n")[0].trim();
         }
 
         if (!firstHost) {
@@ -109,24 +113,34 @@ app.post("/scrape-luma-event", async (req, res) => {
 
     await browser.close();
 
-    // 🧠 Combine and parse times
-    const timeMatch = raw.dateDesc.match(/(\d{1,2}:\d{2}\s*[APMapm]+)\s*-\s*(\d{1,2}:\d{2}\s*[APMapm]+)/);
+    // 🧠 Combine date parts
+    const timeMatch = raw.dateDesc.match(
+      /(\d{1,2}:\d{2}\s*[APMapm]+)\s*-\s*(\d{1,2}:\d{2}\s*[APMapm]+)/
+    );
     const [startTime, endTime] = timeMatch ? [timeMatch[1], timeMatch[2]] : ["", ""];
 
-    let startISO = "", endISO = "";
+    let startISO = "",
+      endISO = "";
     try {
       if (raw.dateTitle && startTime && endTime) {
         const baseDate = raw.dateTitle.replace(",", "");
-        const start = DateTime.fromFormat(`${baseDate} ${startTime}`, "cccc LLLL d h:mm a");
-        const end = DateTime.fromFormat(`${baseDate} ${endTime}`, "cccc LLLL d h:mm a");
-        if (start.isValid) startISO = start.toISO({ suppressMilliseconds: true, includeOffset: false });
-        if (end.isValid) endISO = end.toISO({ suppressMilliseconds: true, includeOffset: false });
+        const start = DateTime.fromFormat(
+          `${baseDate} ${startTime}`,
+          "cccc LLLL d h:mm a"
+        );
+        const end = DateTime.fromFormat(
+          `${baseDate} ${endTime}`,
+          "cccc LLLL d h:mm a"
+        );
+        if (start.isValid)
+          startISO = start.toISO({ suppressMilliseconds: true, includeOffset: false });
+        if (end.isValid)
+          endISO = end.toISO({ suppressMilliseconds: true, includeOffset: false });
       }
     } catch (err) {
       console.warn("⚠️ Date parse failed:", err.message);
     }
 
-    // ✅ Final structured data
     const data = {
       title: raw.title,
       date_text: `${raw.dateTitle} • ${raw.dateDesc}`,
@@ -139,7 +153,7 @@ app.post("/scrape-luma-event", async (req, res) => {
       image: raw.image,
     };
 
-    console.log("✅ Scraped:", data.title);
+    console.log("✅ Successfully scraped:", data.title);
     res.json({ success: true, url, data });
   } catch (error) {
     console.error("❌ Scraping failed:", error.message);
@@ -147,8 +161,7 @@ app.post("/scrape-luma-event", async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
-  console.log("🎭 Using Puppeteer Docker image (pre-installed Chrome)");
 });
