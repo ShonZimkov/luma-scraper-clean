@@ -7,9 +7,12 @@
   },
   "dependencies": {
     "@sparticuz/chromium": "^129.0.0",
-    "puppeteer-core": "^22.6.5",
-    "express": "^5.1.0",
     "cors": "^2.8.5",
-    "luxon": "^3.7.2"
+    "express": "^5.1.0",
+    "luxon": "^3.7.2",
+    "puppeteer-core": "^22.6.5"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.25.0"
   }
 }

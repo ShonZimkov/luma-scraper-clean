@@ -59,14 +59,29 @@ app.post("/scrape-luma-event", async (req, res) => {
   }
 
   try {
-console.log("🚀 Launching headless Chromium...");
-const browser = await puppeteer.launch({
-  args: chromium.args,
-  defaultViewport: chromium.defaultViewport,
-  executablePath: await chromium.executablePath(),
-  headless: chromium.headless,
-});
-console.log("✅ Browser launched successfully");
+    console.log("🚀 Launching headless browser...");
+
+    let browser;
+    
+    if (process.platform === "darwin") {
+      // 🧭 macOS or local dev → use full Puppeteer
+      const puppeteer = require("puppeteer");
+      browser = await puppeteer.launch({
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        executablePath: puppeteer.executablePath(),
+      });
+      console.log("✅ Local Puppeteer launched");
+    } else {
+      // 🧭 Render/Linux → use Sparticuz Chromium (lightweight build)
+      browser = await puppeteer.launch({
+        args: chromium.args,
+        defaultViewport: chromium.defaultViewport,
+        executablePath: await chromium.executablePath(),
+        headless: chromium.headless,
+      });
+      console.log("✅ Render Chromium launched");
+    }
 
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
@@ -82,29 +97,66 @@ console.log("✅ Browser launched successfully");
         }
         return "";
       };
-
+    
       const getImage = () => {
         const imgEl = document.querySelector("img[src*='event-covers']");
         if (imgEl) return imgEl.src;
         const meta = document.querySelector('meta[property="og:image"]');
         return meta ? meta.content : "";
       };
-
+    
+      // Date details
       const dateTitle = document.querySelector("div.title.text-ellipses")?.innerText.trim() || "";
       const dateDesc = document.querySelector("div.desc.text-ellipses")?.innerText.trim() || "";
-      const venueAddress = document.querySelector("div.text-tinted.fs-sm.mt-05")?.innerText.trim() || "";
+    
+      // Venue name and location
+      const venueAddressEl = document.querySelector("div.text-tinted.fs-sm.mt-05");
+      const venueAddress = venueAddressEl?.innerText.trim() || "";
+      const venueName = venueAddressEl?.previousElementSibling?.innerText.trim() || "";
+    
+      // Organizer — only first host name
+// Organizer — only first valid host name
+// Organizer — reliably get first host name (handles multiple organizers)
+let firstHost = "";
 
+try {
+  // grab the main container that holds the host names
+  const hostContainer =
+    document.querySelector('[data-testid="event-host"]') ||
+    document.querySelector("div[class*='host']") ||
+    document.querySelector("div[class*='OrganizerName']") ||
+    document.querySelector("a[href*='/profile/']");
+
+  if (hostContainer) {
+    // look for all anchor tags or direct child divs inside
+    const hostCandidates = Array.from(
+      hostContainer.querySelectorAll("a, div, span")
+    )
+      .map(el => el.innerText.trim())
+      .filter(txt => txt && txt.length > 1);
+
+    // pick the very first name-like entry (ignoring roles or multiline)
+    firstHost =
+      hostCandidates.find(txt => /^[A-Za-z]/.test(txt) && !txt.includes("\n")) ||
+      hostContainer.innerText.split("\n")[0].trim();
+  }
+
+  // if still empty, look globally for the first profile link
+  if (!firstHost) {
+    const globalHost = document.querySelector("a[href*='/profile/']");
+    if (globalHost) firstHost = globalHost.innerText.trim();
+  }
+} catch (e) {
+  console.warn("⚠️ Organizer parse failed:", e);
+}
+    
       return {
         title: getText(["h1"]),
         dateTitle,
         dateDesc,
+        venue: venueName,
         locationText: venueAddress,
-        organizer: getText([
-          '[data-testid=\"event-host\"]',
-          "a[href*='/profile/']",
-          "div[class*='OrganizerName']",
-          "div[class*='host']",
-        ]),
+        organizer: firstHost, // 🆕 Only first host
         image: getImage(),
       };
     });
@@ -138,9 +190,10 @@ console.log("✅ Browser launched successfully");
       date_text: `${raw.dateTitle} • ${raw.dateDesc}`,
       date_start: startISO,
       date_end: endISO,
+      venue: raw.venue, // ✅ new field
       location_text: raw.locationText,
       location_geographic: raw.locationText,
-      organizer: raw.organizer,
+      organizer: raw.organizer, // ✅ now first host only
       image: raw.image,
     };
 
