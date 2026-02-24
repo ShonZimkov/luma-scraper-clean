@@ -130,6 +130,109 @@ app.post("/matches/ranked", requireApiKey, async (req, res) => {
   }
 });
 
+// ─── POST /matches/calendar-check ───────────────────────────────────
+app.post("/matches/calendar-check", requireApiKey, async (req, res) => {
+  try {
+    const { trips, detourThreshold = 1800 } = req.body;
+
+    if (!trips || !Array.isArray(trips) || trips.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Request body must include a non-empty trips array",
+      });
+    }
+
+    const requiredFields = ["originLat", "originLng", "destLat", "destLng", "directDuration"];
+
+    // Validate all trips up front
+    for (let t = 0; t < trips.length; t++) {
+      const { mainTrip, candidates } = trips[t];
+      if (!mainTrip || !candidates) {
+        return res.status(400).json({
+          success: false,
+          error: `trips[${t}] must include mainTrip and candidates`,
+        });
+      }
+      for (const field of requiredFields) {
+        if (mainTrip[field] == null) {
+          return res.status(400).json({
+            success: false,
+            error: `trips[${t}].mainTrip is missing required field: ${field}`,
+          });
+        }
+      }
+      for (let c = 0; c < candidates.length; c++) {
+        for (const field of requiredFields) {
+          if (candidates[c][field] == null) {
+            return res.status(400).json({
+              success: false,
+              error: `trips[${t}].candidates[${c}] is missing required field: ${field}`,
+            });
+          }
+        }
+      }
+    }
+
+    // Process each trip sequentially (each may need Google Maps calls)
+    const results = [];
+
+    for (const trip of trips) {
+      const { mainTrip, candidates } = trip;
+
+      // No candidates → no match
+      if (candidates.length === 0) {
+        results.push({ id: mainTrip.id, hasMatch: false, matchCount: 0, bestDetour: null });
+        continue;
+      }
+
+      const mainOrigin = { lat: mainTrip.originLat, lng: mainTrip.originLng };
+      const mainDest = { lat: mainTrip.destLat, lng: mainTrip.destLng };
+
+      const candidateOrigins = candidates.map((c) => ({ lat: c.originLat, lng: c.originLng }));
+      const candidateDests = candidates.map((c) => ({ lat: c.destLat, lng: c.destLng }));
+
+      // 2 Distance Matrix calls per trip (same as /matches/ranked)
+      const [toPickup, toDest] = await Promise.all([
+        distanceMatrix([mainOrigin], candidateOrigins),
+        distanceMatrix(candidateDests, [mainDest]),
+      ]);
+
+      let matchCount = 0;
+      let bestDetour = null;
+
+      for (let i = 0; i < candidates.length; i++) {
+        const leg1Element = toPickup.rows[0].elements[i];
+        const leg2Element = toDest.rows[i].elements[0];
+
+        if (leg1Element.status !== "OK" || leg2Element.status !== "OK") continue;
+
+        const leg1 = leg1Element.duration.value;
+        const leg2 = leg2Element.duration.value;
+        const detour = leg1 + candidates[i].directDuration + leg2 - mainTrip.directDuration;
+
+        if (detour <= detourThreshold) {
+          matchCount++;
+          if (bestDetour === null || detour < bestDetour) {
+            bestDetour = detour;
+          }
+        }
+      }
+
+      results.push({
+        id: mainTrip.id,
+        hasMatch: matchCount > 0,
+        matchCount,
+        bestDetour,
+      });
+    }
+
+    res.json({ success: true, results });
+  } catch (error) {
+    console.error("❌ /matches/calendar-check failed:", error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Normalize Luma URLs
 const normalizeLumaUrl = (url) =>
   url
