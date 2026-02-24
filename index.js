@@ -8,6 +8,128 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ─── API Key Authentication Middleware ───────────────────────────────
+const requireApiKey = (req, res, next) => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) return next(); // skip auth if no key configured
+  const provided = req.headers["x-api-key"];
+  if (provided !== apiKey) {
+    return res.status(401).json({ success: false, error: "Invalid or missing API key" });
+  }
+  next();
+};
+
+// ─── Google Maps Distance Matrix Helper ──────────────────────────────
+const GOOGLE_MAPS_BASE = "https://maps.googleapis.com/maps/api/distancematrix/json";
+
+async function distanceMatrix(origins, destinations) {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) throw new Error("GOOGLE_MAPS_API_KEY is not configured");
+
+  const formatPoints = (points) =>
+    points.map((p) => `${p.lat},${p.lng}`).join("|");
+
+  const params = new URLSearchParams({
+    origins: formatPoints(origins),
+    destinations: formatPoints(destinations),
+    key: apiKey,
+  });
+
+  const resp = await fetch(`${GOOGLE_MAPS_BASE}?${params}`);
+  const data = await resp.json();
+
+  if (data.status !== "OK") {
+    throw new Error(`Distance Matrix API error: ${data.status} – ${data.error_message || ""}`);
+  }
+  return data;
+}
+
+// ─── POST /matches/ranked ────────────────────────────────────────────
+app.post("/matches/ranked", requireApiKey, async (req, res) => {
+  try {
+    const { mainTrip, candidates } = req.body;
+
+    // Validate request
+    if (!mainTrip || !candidates) {
+      return res.status(400).json({
+        success: false,
+        error: "Request body must include mainTrip and candidates",
+      });
+    }
+
+    const requiredFields = ["originLat", "originLng", "destLat", "destLng", "directDuration"];
+    for (const field of requiredFields) {
+      if (mainTrip[field] == null) {
+        return res.status(400).json({
+          success: false,
+          error: `mainTrip is missing required field: ${field}`,
+        });
+      }
+    }
+
+    // Empty candidates → return early
+    if (candidates.length === 0) {
+      return res.json({ success: true, matches: [] });
+    }
+
+    // Validate each candidate
+    for (let i = 0; i < candidates.length; i++) {
+      for (const field of requiredFields) {
+        if (candidates[i][field] == null) {
+          return res.status(400).json({
+            success: false,
+            error: `candidates[${i}] is missing required field: ${field}`,
+          });
+        }
+      }
+    }
+
+    // Build origins/destinations for the 2 Distance Matrix calls
+    const mainOrigin = { lat: mainTrip.originLat, lng: mainTrip.originLng };
+    const mainDest = { lat: mainTrip.destLat, lng: mainTrip.destLng };
+
+    const candidateOrigins = candidates.map((c) => ({ lat: c.originLat, lng: c.originLng }));
+    const candidateDests = candidates.map((c) => ({ lat: c.destLat, lng: c.destLng }));
+
+    // Call 1: mainOrigin → each candidate origin
+    // Call 2: each candidate dest → mainDest
+    const [toPickup, toDest] = await Promise.all([
+      distanceMatrix([mainOrigin], candidateOrigins),
+      distanceMatrix(candidateDests, [mainDest]),
+    ]);
+
+    // Compute detour for each candidate
+    const matches = candidates.map((candidate, i) => {
+      const leg1Element = toPickup.rows[0].elements[i];
+      const leg2Element = toDest.rows[i].elements[0];
+
+      // If Google Maps can't route to/from a candidate, skip it
+      if (leg1Element.status !== "OK" || leg2Element.status !== "OK") {
+        return { id: candidate.id, detourSeconds: null, error: "Route not found" };
+      }
+
+      const leg1 = leg1Element.duration.value; // mainOrigin → candidateOrigin
+      const leg2 = leg2Element.duration.value; // candidateDest → mainDest
+      const detour = leg1 + candidate.directDuration + leg2 - mainTrip.directDuration;
+
+      return { id: candidate.id, detourSeconds: detour };
+    });
+
+    // Sort: routable matches by detour ascending, unroutable at end
+    matches.sort((a, b) => {
+      if (a.detourSeconds == null && b.detourSeconds == null) return 0;
+      if (a.detourSeconds == null) return 1;
+      if (b.detourSeconds == null) return -1;
+      return a.detourSeconds - b.detourSeconds;
+    });
+
+    res.json({ success: true, matches });
+  } catch (error) {
+    console.error("❌ /matches/ranked failed:", error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Normalize Luma URLs
 const normalizeLumaUrl = (url) =>
   url
@@ -132,28 +254,73 @@ try {
       const venueName =
         venueAddressEl?.previousElementSibling?.innerText.trim() || "";
 
-      // Organizer — only first valid host name
+      // Organizer — prefer the "Presented by" section, then fall back
       let firstHost = "";
       try {
-        const hostContainer =
-          document.querySelector('[data-testid="event-host"]') ||
-          document.querySelector("div[class*='host']") ||
-          document.querySelector("div[class*='OrganizerName']") ||
-          document.querySelector("a[href*='/profile/']");
+        // 1) Exact structure from provided DOM:
+        //    <div.fs-xxs.text-tinted.reduced-line-height>Presented by</div>
+        //    <a.title> ... <div.fw-medium.text-ellipses>ORG</div> ... </a>
+        const labelEl = Array.from(
+          document.querySelectorAll("div.fs-xxs.text-tinted.reduced-line-height")
+        ).find((el) => (el.innerText || "").trim().toLowerCase() === "presented by");
 
-        if (hostContainer) {
-          const hostCandidates = Array.from(
-            hostContainer.querySelectorAll("a, div, span")
-          )
-            .map((el) => el.innerText.trim())
-            .filter((txt) => txt && txt.length > 1);
+        if (labelEl) {
+          // Prefer the next sibling anchor with class 'title'
+          let anchor = labelEl.nextElementSibling;
+          while (anchor && !(anchor.tagName === "A" && anchor.classList.contains("title"))) {
+            anchor = anchor.nextElementSibling;
+          }
 
-          firstHost =
-            hostCandidates.find(
-              (txt) => /^[A-Za-z]/.test(txt) && !txt.includes("\n")
-            ) || hostContainer.innerText.split("\n")[0].trim();
+          if (!anchor) {
+            // Fallback: search within the same parent container
+            anchor = labelEl.parentElement?.querySelector("a.title") || null;
+          }
+
+          if (anchor) {
+            const orgNode = anchor.querySelector("div.fw-medium.text-ellipses");
+            const orgText = orgNode?.innerText?.trim();
+            if (orgText) firstHost = orgText;
+          }
         }
 
+        // 1b) Generic presented-by search as a softer fallback (nearby text)
+        if (!firstHost) {
+          const allNodes = Array.from(document.querySelectorAll("div, section, article, aside, span, p, li"));
+          const presentedByContainer = allNodes.find((el) => {
+            const text = (el.innerText || "").trim().toLowerCase();
+            return text.startsWith("presented by") || text.includes("\npresented by") || text === "presented by";
+          });
+          if (presentedByContainer) {
+            const candidates = Array.from(presentedByContainer.querySelectorAll("a, strong, b, span, div"))
+              .map((el) => el.innerText?.trim())
+              .filter((t) => t && t.length > 1 && !/^presented by$/i.test(t));
+            const candidate = candidates.find((t) => /^[A-Za-z]/.test(t) && !t.includes("\n"));
+            if (candidate) firstHost = candidate;
+            if (!firstHost) {
+              const raw = (presentedByContainer.innerText || "").split("\n").map((s) => s.trim()).filter(Boolean);
+              const labelIdx = raw.findIndex((t) => /^presented by$/i.test(t) || t.toLowerCase().startsWith("presented by"));
+              if (labelIdx > -1 && raw[labelIdx + 1]) firstHost = raw[labelIdx + 1];
+            }
+          }
+        }
+
+        // 2) If not found, try dedicated host containers
+        if (!firstHost) {
+          const hostContainer =
+            document.querySelector('[data-testid="event-host"]') ||
+            document.querySelector("div[class*='host']") ||
+            document.querySelector("div[class*='OrganizerName']") ||
+            document.querySelector("a[href*='/profile/']");
+
+          if (hostContainer) {
+            const hostCandidates = Array.from(hostContainer.querySelectorAll("a, div, span"))
+              .map((el) => el.innerText.trim())
+              .filter((txt) => txt && txt.length > 1);
+            firstHost = hostCandidates.find((txt) => /^[A-Za-z]/.test(txt) && !txt.includes("\n")) || hostContainer.innerText.split("\n")[0].trim();
+          }
+        }
+
+        // 3) Last resort: any profile link
         if (!firstHost) {
           const globalHost = document.querySelector("a[href*='/profile/']");
           if (globalHost) firstHost = globalHost.innerText.trim();
