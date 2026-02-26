@@ -474,16 +474,23 @@ try {
     }
 
     // Blank out non-real addresses (hidden behind registration or city-only)
-    const isHiddenAddress = (text) => {
-      if (!text) return true;
+    const isHiddenVenue = (text) => {
+      if (!text) return false;
       const lower = text.toLowerCase();
-      if (lower.includes("register") && lower.includes("address")) return true;
-      if (lower.includes("rsvp") && lower.includes("address")) return true;
-      if (!/\d/.test(text) && /^[A-Za-z\s]+,\s*[A-Z]{2}$/.test(text.trim())) return true;
+      if (lower.includes("register") && (lower.includes("address") || lower.includes("location"))) return true;
+      if (lower.includes("rsvp") && (lower.includes("address") || lower.includes("location"))) return true;
       return false;
     };
 
-    if (isHiddenAddress(raw.locationText)) {
+    const isCityOnly = (text) => {
+      if (!text) return true;
+      if (/\d/.test(text)) return false; // has a street number → real address
+      // "City, ST" or "City, State" (e.g. "San Francisco, CA" or "San Francisco, California")
+      if (/^[A-Za-z\s]+,\s*[A-Za-z]{2,}$/.test(text.trim())) return true;
+      return false;
+    };
+
+    if (isHiddenVenue(raw.venue) || isHiddenVenue(raw.locationText) || isCityOnly(raw.locationText)) {
       raw.locationText = "";
       raw.venue = "";
     }
