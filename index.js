@@ -473,6 +473,21 @@ try {
       console.warn("⚠️ Date parse failed:", err.message);
     }
 
+    // Blank out non-real addresses (hidden behind registration or city-only)
+    const isHiddenAddress = (text) => {
+      if (!text) return true;
+      const lower = text.toLowerCase();
+      if (lower.includes("register") && lower.includes("address")) return true;
+      if (lower.includes("rsvp") && lower.includes("address")) return true;
+      if (!/\d/.test(text) && /^[A-Za-z\s]+,\s*[A-Z]{2}$/.test(text.trim())) return true;
+      return false;
+    };
+
+    if (isHiddenAddress(raw.locationText)) {
+      raw.locationText = "";
+      raw.venue = "";
+    }
+
     const data = {
       title: raw.title,
       date_text: `${raw.dateTitle} • ${raw.dateDesc}`,
