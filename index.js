@@ -44,6 +44,32 @@ async function distanceMatrix(origins, destinations) {
   return data;
 }
 
+// ─── Google Maps Directions Helper (with waypoints) ──────────────────
+async function directionsWithWaypoints(origin, destination, waypoints) {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) throw new Error("GOOGLE_MAPS_API_KEY is not configured");
+
+  const fmt = (p) => `${p.lat},${p.lng}`;
+
+  const params = new URLSearchParams({
+    origin: fmt(origin),
+    destination: fmt(destination),
+    waypoints: waypoints.map(fmt).join("|"),
+    key: apiKey,
+  });
+
+  const resp = await fetch(`https://maps.googleapis.com/maps/api/directions/json?${params}`);
+  const data = await resp.json();
+
+  if (data.status !== "OK") {
+    return null; // unroutable
+  }
+
+  // Sum duration across all legs of the route
+  const totalSeconds = data.routes[0].legs.reduce((sum, leg) => sum + leg.duration.value, 0);
+  return totalSeconds;
+}
+
 // ─── POST /matches/ranked ────────────────────────────────────────────
 app.post("/matches/ranked", requireApiKey, async (req, res) => {
   try {
@@ -84,46 +110,45 @@ app.post("/matches/ranked", requireApiKey, async (req, res) => {
       }
     }
 
-    // Build origins/destinations for the 2 Distance Matrix calls
     const mainOrigin = { lat: mainTrip.originLat, lng: mainTrip.originLng };
     const mainDest = { lat: mainTrip.destLat, lng: mainTrip.destLng };
 
-    const candidateOrigins = candidates.map((c) => ({ lat: c.originLat, lng: c.originLng }));
-    const candidateDests = candidates.map((c) => ({ lat: c.destLat, lng: c.destLng }));
-
-    // Call 1: mainOrigin → each candidate origin
-    // Call 2: each candidate dest → mainDest
-    const [toPickup, toDest] = await Promise.all([
-      distanceMatrix([mainOrigin], candidateOrigins),
-      distanceMatrix(candidateDests, [mainDest]),
-    ]);
+    // One Directions call per candidate: mainOrigin → candidateOrigin → candidateDest → mainDest
+    const routeDurations = await Promise.all(
+      candidates.map((c) =>
+        directionsWithWaypoints(
+          mainOrigin,
+          mainDest,
+          [
+            { lat: c.originLat, lng: c.originLng },
+            { lat: c.destLat, lng: c.destLng },
+          ]
+        )
+      )
+    );
 
     // Compute detour for each candidate
     const matches = candidates.map((candidate, i) => {
-      const leg1Element = toPickup.rows[0].elements[i];
-      const leg2Element = toDest.rows[i].elements[0];
+      const totalWithDetour = routeDurations[i];
 
-      // If Google Maps can't route to/from a candidate, skip it
-      if (leg1Element.status !== "OK" || leg2Element.status !== "OK") {
+      if (totalWithDetour === null) {
         return { id: candidate.id, detourSeconds: null, error: "Route not found" };
       }
 
-      const leg1 = leg1Element.duration.value; // mainOrigin → candidateOrigin
-      const leg2 = leg2Element.duration.value; // candidateDest → mainDest
-      const detour = leg1 + candidate.directDuration + leg2 - mainTrip.directDuration;
-
+      const detour = totalWithDetour - mainTrip.directDuration;
       return { id: candidate.id, detourSeconds: detour };
     });
 
-    // Sort: routable matches by detour ascending, unroutable at end
-    matches.sort((a, b) => {
-      if (a.detourSeconds == null && b.detourSeconds == null) return 0;
-      if (a.detourSeconds == null) return 1;
-      if (b.detourSeconds == null) return -1;
-      return a.detourSeconds - b.detourSeconds;
-    });
+    // Filter: drop unroutable and anything over 60 min (3600 s)
+    const maxDetourSeconds = req.body.maxDetourSeconds ?? 3600;
+    const filtered = matches.filter(
+      (m) => m.detourSeconds !== null && m.detourSeconds <= maxDetourSeconds
+    );
 
-    res.json({ success: true, matches });
+    // Sort by detour ascending
+    filtered.sort((a, b) => a.detourSeconds - b.detourSeconds);
+
+    res.json({ success: true, matches: filtered });
   } catch (error) {
     console.error("❌ /matches/ranked failed:", error.message);
     res.status(500).json({ success: false, error: error.message });
